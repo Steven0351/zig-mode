@@ -1,10 +1,12 @@
 ;;; zig-mode.el --- A major mode for the Zig programming language -*- lexical-binding: t -*-
 
+;; Author: Andrea Orru <andreaorru1991@gmail.com>
+;;         Andrew Kelley <superjoe30@gmail.com>
+;; Maintainer: Shen, Jen-Chieh <jcs090218@gmail.com>
+;; URL: https://github.com/zig-lang/zig-mode
 ;; Version: 0.0.8
-;; Author: Andrea Orru <andreaorru1991@gmail.com>, Andrew Kelley <superjoe30@gmail.com>
+;; Package-Requires: ((emacs "26.1") (reformatter "0.6"))
 ;; Keywords: zig, languages
-;; Package-Requires: ((emacs "24.3") (reformatter "0.6"))
-;; Homepage: https://github.com/zig-lang/zig-mode
 
 ;; This file is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -37,49 +39,37 @@
 (defcustom zig-indent-offset 4
   "Indent Zig code by this number of spaces."
   :type 'integer
-  :group 'zig-mode
   :safe #'integerp)
 
 (defcustom zig-format-on-save t
   "Format buffers before saving using zig fmt."
   :type 'boolean
-  :safe #'booleanp
-  :group 'zig-mode)
-
-(defcustom zig-format-show-buffer t
-  "Show a *zig-fmt* buffer after zig fmt completes with errors"
-  :type 'boolean
-  :safe #'booleanp
-  :group 'zig-mode)
+  :safe #'booleanp)
 
 (defcustom zig-zig-bin "zig"
   "Path to zig executable."
   :type 'file
-  :safe #'stringp
-  :group 'zig-mode)
+  :safe #'stringp)
 
 (defcustom zig-run-optimization-mode "Debug"
   "Optimization mode to run code with."
   :type 'string
-  :safe #'stringp
-  :group 'zig-mode)
+  :safe #'stringp)
 
 (defcustom zig-test-optimization-mode "Debug"
   "Optimization mode to run tests with."
   :type 'string
-  :safe #'stringp
-  :group 'zig-mode)
+  :safe #'stringp)
 
 ;; zig CLI commands
 
 (defun zig--run-cmd (cmd &optional source &rest args)
   "Use compile command to execute a zig CMD with ARGS if given.
 If given a SOURCE, execute the CMD on it."
-  (let ((cmd-args
-         (if source
-             (mapconcat 'shell-quote-argument (cons source args) " ")
-           args)))
-    (compilation-start (concat zig-zig-bin " " cmd " " cmd-args))))
+  (let ((cmd-args (if source (cons source args) args)))
+    (save-some-buffers)
+    (compilation-start (mapconcat 'shell-quote-argument
+                                  `(,zig-zig-bin ,cmd ,@cmd-args) " "))))
 
 ;;;###autoload
 (defun zig-compile ()
@@ -91,31 +81,31 @@ If given a SOURCE, execute the CMD on it."
 (defun zig-build-exe ()
   "Create executable from source or object file."
   (interactive)
-  (zig--run-cmd "build-exe" (buffer-file-name)))
+  (zig--run-cmd "build-exe" (file-local-name (buffer-file-name))))
 
 ;;;###autoload
 (defun zig-build-lib ()
   "Create library from source or assembly."
   (interactive)
-  (zig--run-cmd "build-lib" (buffer-file-name)))
+  (zig--run-cmd "build-lib" (file-local-name (buffer-file-name))))
 
 ;;;###autoload
 (defun zig-build-obj ()
   "Create object from source or assembly."
   (interactive)
-  (zig--run-cmd "build-obj" (buffer-file-name)))
+  (zig--run-cmd "build-obj" (file-local-name (buffer-file-name))))
 
 ;;;###autoload
 (defun zig-test-buffer ()
   "Test buffer using `zig test`."
   (interactive)
-  (zig--run-cmd "test" (buffer-file-name) "-O" zig-test-optimization-mode))
+  (zig--run-cmd "test" (file-local-name (buffer-file-name)) "-O" zig-test-optimization-mode))
 
 ;;;###autoload
 (defun zig-run ()
   "Create an executable from the current buffer and run it immediately."
   (interactive)
-  (zig--run-cmd "run" (buffer-file-name) "-O" zig-run-optimization-mode))
+  (zig--run-cmd "run" (file-local-name (buffer-file-name)) "-O" zig-run-optimization-mode))
 
 ;; zig fmt
 
@@ -125,9 +115,9 @@ If given a SOURCE, execute the CMD on it."
   :group 'zig-mode
   :lighter " ZigFmt")
 
-;;;###autoload (autoload 'zig-format-buffer "current-file" nil t)
-;;;###autoload (autoload 'zig-format-region "current-file" nil t)
-;;;###autoload (autoload 'zig-format-on-save-mode "current-file" nil t)
+;;;###autoload (autoload 'zig-format-buffer "zig-mode" nil t)
+;;;###autoload (autoload 'zig-format-region "zig-mode" nil t)
+;;;###autoload (autoload 'zig-format-on-save-mode "zig-mode" nil t)
 
 (defun zig-re-word (inner)
   "Construct a regular expression for the word INNER."
@@ -145,11 +135,15 @@ If given a SOURCE, execute the CMD on it."
   (concat "\\(?:" zig-re-optional "\\|" zig-re-pointer "\\|" zig-re-array "\\)*"))
 
 (defconst zig-re-identifier "[[:word:]_][[:word:]_[:digit:]]*")
+(defconst zig-re-type "[[:word:]_.][[:word:]_.[:digit:]]*")
 (defconst zig-re-type-annotation
   (concat (zig-re-grab zig-re-identifier)
           "[[:space:]]*:[[:space:]]*"
           zig-re-optionals-pointers-arrays
-          (zig-re-grab zig-re-identifier)))
+          (zig-re-grab zig-re-type)))
+
+(defconst zig-re-block-label-open " \\([[:word:]_]+:\\)[[:space:]]*{")
+(defconst zig-re-block-label-break "break[[:space:]]*\\(:[[:word:]_]+\\)")
 
 (defun zig-re-definition (dtype)
   "Construct a regular expression for definitions of type DTYPE."
@@ -173,82 +167,83 @@ If given a SOURCE, execute the CMD on it."
 
     table))
 
-(defconst zig-keywords
-  '(
-    ;; Storage
-    "const" "var" "extern" "packed" "export" "pub" "noalias" "inline"
-    "noinline" "comptime" "callconv" "volatile" "allowzero"
-    "align" "linksection" "threadlocal"
-
-    ;; Structure
-    "struct" "enum" "union" "error" "opaque"
-
-    ;; Statement
-    "break" "return" "continue" "asm" "defer" "errdefer" "unreachable"
-    "try" "catch" "async" "nosuspend" "await" "suspend" "resume"
-
-    ;; Conditional
-    "if" "else" "switch" "and" "or" "orelse"
-
-    ;; Repeat
-    "while" "for"
-
-    ;; Other keywords
-    "fn" "usingnamespace" "test"))
-
-(defconst zig-types
-  '(
-    ;; Integer types
-    "i2" "u2" "i3" "u3" "i4" "u4" "i5" "u5" "i6" "u6" "i7" "u7" "i8" "u8"
-    "i16" "u16" "i29" "u29" "i32" "u32" "i64" "u64" "i128" "u128"
-    "isize" "usize"
-
-    ;; Floating types
-    "f16" "f32" "f64" "f128"
-
-    ;; C types
-    "c_short" "c_ushort" "c_int" "c_uint" "c_long" "c_ulong"
-    "c_longlong" "c_ulonglong" "c_longdouble"
-
-    ;; Comptime types
-    "comptime_int" "comptime_float"
-
-    ;; Other types
-    "bool" "void" "noreturn" "type" "error" "anyerror" "anyframe" "anytype"
-    "anyopaque"))
-
-(defconst zig-constants
-  '(
-    ;; Boolean
-    "true" "false"
-
-    ;; Other constants
-    "null" "undefined"))
-
 (defconst zig-electric-indent-chars
-  '(?\; ?, ?\) ?\] ?}))
-
+  '(?\; ?\, ?\) ?\] ?\}))
 
 (defface zig-multiline-string-face
   '((t :inherit font-lock-string-face))
-  "Face for multiline string literals."
-  :group 'zig-mode)
+  "Face for multiline string literals.")
 
 (defvar zig-font-lock-keywords
   (append
-   `(
-     ;; Builtins (prefixed with @)
+   `(;; Builtins (prefixed with @)
      (,(concat "@" zig-re-identifier) . font-lock-builtin-face)
 
      ;; Keywords, constants and types
-     (,(regexp-opt zig-keywords  'symbols) . font-lock-keyword-face)
-     (,(regexp-opt zig-constants 'symbols) . font-lock-constant-face)
-     (,(regexp-opt zig-types     'symbols) . font-lock-type-face)
+     (,(rx symbol-start
+           (|
+            ;; Storage
+            "const" "var" "extern" "packed" "export" "pub" "noalias" "inline"
+            "noinline" "comptime" "callconv" "volatile" "allowzero"
+            "align" "linksection" "threadlocal" "addrspace"
+
+            ;; Structure
+            "struct" "enum" "union" "error" "opaque"
+
+            ;; Statement
+            "break" "return" "continue" "asm" "defer" "errdefer" "unreachable"
+            "try" "catch" "async" "nosuspend" "await" "suspend" "resume"
+
+            ;; Conditional
+            "if" "else" "switch" "and" "or" "orelse"
+
+            ;; Repeat
+            "while" "for"
+
+            ;; Other keywords
+            "fn" "usingnamespace" "test")
+           symbol-end)
+      . font-lock-keyword-face)
+
+     (,(rx symbol-start
+           (|
+            ;; Boolean
+            "true" "false"
+
+            ;; Other constants
+            "null" "undefined")
+           symbol-end)
+      . font-lock-constant-face)
+
+     (,(rx symbol-start
+           (|
+            ;; Integer types
+            (: (any ?i ?u) (| ?0 (: (any (?1 . ?9)) (* digit))))
+            "isize" "usize"
+
+            ;; Floating types
+            "f16" "f32" "f64" "f80" "f128"
+
+            ;; C types
+            "c_char" "c_short" "c_ushort" "c_int" "c_uint" "c_long" "c_ulong"
+            "c_longlong" "c_ulonglong" "c_longdouble"
+
+            ;; Comptime types
+            "comptime_int" "comptime_float"
+
+            ;; Other types
+            "bool" "void" "noreturn" "type" "anyerror" "anyframe" "anytype"
+            "anyopaque")
+           symbol-end)
+      . font-lock-type-face)
+
+     ;; Block labels
+     (,zig-re-block-label-open 1 font-lock-constant-face)
+     (,zig-re-block-label-break 1 font-lock-constant-face)
 
      ;; Type annotations (both variable and type)
      (,zig-re-type-annotation 1 font-lock-variable-name-face)
-     (,zig-re-type-annotation 2 font-lock-type-face)
-     )
+     (,zig-re-type-annotation 2 font-lock-type-face))
 
    ;; Definitions
    (mapcar (lambda (x)
@@ -321,7 +316,7 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
   (interactive)
 
   ;; Jump over the function parameters and paren-wrapped return, if they exist.
-  (while (re-search-forward "(" (point-at-eol) t)
+  (while (re-search-forward "(" (line-end-position) t)
     (progn
       (backward-char)
       (forward-sexp)))
@@ -374,18 +369,19 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
                            (and (not (looking-at " *\\(//[^\n]*\\)?\n"))
                                 (current-column)))
                          (+ prev-block-indent-col zig-indent-offset))))
-                  ;; is-expr-continutation: True if this line continues an
+                  ;; is-expr-continuation: True if this line continues an
                   ;; expression from the previous line, false otherwise.
-                  (is-expr-continutation
+                  (is-expr-continuation
                    (and
                     (not (looking-at "[]});]\\|else"))
                     (save-excursion
                       (zig-skip-backwards-past-whitespace-and-comments)
                       (when (> (point) 1)
                         (backward-char)
-                        (not (looking-at "[,;([{}]")))))))
+                        (or (zig-currently-in-str)
+                            (not (looking-at "[,;([{}]"))))))))
              ;; Now we can calculate indent-col:
-             (if is-expr-continutation
+             (if is-expr-continuation
                  (+ base-indent-col zig-indent-offset)
                base-indent-col)))))
     ;; If point is within the indentation whitespace, move it to the end of the
@@ -396,63 +392,31 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
         (indent-line-to indent-col)
       (save-excursion (indent-line-to indent-col)))))
 
-(defun zig-syntax-propertize-to-newline-if-in-multiline-str (end)
-  ;; First, we need to check if we're in a multiline string literal; if we're
-  ;; not, do nothing.
-  (when (zig-currently-in-str)
-    (let ((start (zig-start-of-current-str-or-comment)))
-      (when (save-excursion
-              (goto-char start)
-              (looking-at "\\\\\\\\"))
-        ;; At this point, we've determined that we're within a multiline string
-        ;; literal.  Let `stop' be the position of the closing newline, or
-        ;; `end', whichever comes first.
-        (let ((stop (if (save-excursion
-                          (goto-char start)
-                          (re-search-forward "\n" end t))
-                        (prog1 (match-end 0)
-                          ;; We found the closing newline, so mark it as the
-                          ;; end of this string literal.
-                          (put-text-property (match-beginning 0)
-                                             (match-end 0)
-                                             'syntax-table
-                                             (string-to-syntax "|")))
-                      end)))
-          ;; Zig multiline string literals don't support escapes, so mark all
-          ;; backslashes (up to `stop') as punctation instead of escapes.
-          (save-excursion
-            (goto-char (1+ start))
-            (while (re-search-forward "\\\\" stop t)
-              (put-text-property (match-beginning 0) (match-end 0)
-                                 'syntax-table (string-to-syntax "."))
-              (goto-char (match-end 0))))
-          ;; Move to the end of the string (or `end'), so that
-          ;; zig-syntax-propertize can pick up from there.
-          (goto-char stop))))))
+(defun zig-syntax-propertize-multiline-string (end)
+  (let* ((eol (save-excursion (search-forward "\n" end t)))
+         (stop (or eol end)))
+    (while (search-forward "\\" stop t)
+      (put-text-property (match-beginning 0) (match-end 0) 'syntax-table (string-to-syntax ".")))
+    (when eol (put-text-property (- eol 2) (1- eol) 'syntax-table (string-to-syntax "|")))
+    (goto-char stop)))
 
 (defun zig-syntax-propertize (start end)
   (goto-char start)
-  (zig-syntax-propertize-to-newline-if-in-multiline-str end)
-  (funcall
-   (syntax-propertize-rules
-    ;; Multiline strings
-    ;; Do not match backslashes that are preceded by single or
-    ;; double-quotes.
-    ("[^\\'\"]c?\\(\\\\\\)\\\\"
-     (1 (prog1 "|"
-          (goto-char (match-end 0))
-          (zig-syntax-propertize-to-newline-if-in-multiline-str end)))))
-   (point) end))
+  (when (eq t (zig-currently-in-str))
+    (zig-syntax-propertize-multiline-string end))
+  (while (search-forward "\\\\" end t)
+    (when (null (save-excursion (backward-char 2) (zig-currently-in-str)))
+      (backward-char)
+      (put-text-property (match-beginning 0) (point) 'syntax-table (string-to-syntax "|"))
+      (zig-syntax-propertize-multiline-string end))))
 
 (defun zig-mode-syntactic-face-function (state)
-  (if (nth 3 state)
-      (save-excursion
-        (goto-char (nth 8 state))
+  (save-excursion
+    (goto-char (nth 8 state))
+    (if (nth 3 state)
         (if (looking-at "\\\\\\\\")
             'zig-multiline-string-face
-          'font-lock-string-face))
-    (save-excursion
-      (goto-char (nth 8 state))
+          'font-lock-string-face)
       (if (looking-at "//[/|!][^/]")
           'font-lock-doc-face
         'font-lock-comment-face))))
@@ -471,32 +435,18 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
                   '("enum" "struct" "union"))
           `(("Fn" ,(zig-re-definition "fn") 1))))
 
-;;; Guarantee filesystem unix line endings
-(defun zig-file-coding-system ()
-  (with-current-buffer (current-buffer)
-    (if (buffer-file-name)
-        (if (string-match "\\.d?zig\\'" buffer-file-name)
-            (setq buffer-file-coding-system 'utf-8-unix)
-          nil))
-))
-
-(add-hook 'zig-mode-hook 'zig-file-coding-system)
-
 (defvar zig-mode-map
   (let ((map (make-sparse-keymap)))
-	(define-key map (kbd "C-c C-b") 'zig-compile)
-	(define-key map (kbd "C-c C-f") 'zig-format-buffer)
-	(define-key map (kbd "C-c C-r") 'zig-run)
-	(define-key map (kbd "C-c C-t") 'zig-test-buffer)
-	map)
+    (define-key map (kbd "C-c C-b") #'zig-compile)
+    (define-key map (kbd "C-c C-f") #'zig-format-buffer)
+    (define-key map (kbd "C-c C-r") #'zig-run)
+    (define-key map (kbd "C-c C-t") #'zig-test-buffer)
+    map)
   "Keymap for Zig major mode.")
 
 ;;;###autoload
 (define-derived-mode zig-mode prog-mode "Zig"
-  "A major mode for the Zig programming language.
-
-\\{zig-mode-map}"
-  :group 'zig-mode
+  "A major mode for the Zig programming language."
   (setq-local comment-start "// ")
   (setq-local comment-start-skip "//+ *")
   (setq-local comment-end "")
@@ -510,6 +460,8 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
   (setq-local indent-tabs-mode nil)  ; Zig forbids tab characters.
   (setq-local syntax-propertize-function 'zig-syntax-propertize)
   (setq-local imenu-generic-expression zig-imenu-generic-expression)
+  (setq-local compile-command "zig build")
+  (setq buffer-file-coding-system 'utf-8-unix) ; zig source is always utf-8
   (setq font-lock-defaults '(zig-font-lock-keywords
                              nil nil nil nil
                              (font-lock-syntactic-face-function . zig-mode-syntactic-face-function)))
@@ -518,7 +470,7 @@ This is written mainly to be used as `end-of-defun-function' for Zig."
     (zig-format-on-save-mode 1)))
 
 ;;;###autoload
-(add-to-list 'auto-mode-alist '("\\.zig\\'" . zig-mode))
+(add-to-list 'auto-mode-alist '("\\.\\(zig\\|zon\\)\\'" . zig-mode))
 
 (provide 'zig-mode)
 ;;; zig-mode.el ends here

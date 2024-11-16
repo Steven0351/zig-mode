@@ -40,7 +40,7 @@ const string =
 ;"
    '(("const" font-lock-keyword-face)
      ("string" font-lock-variable-name-face)
-     ("\\\\ This newline is NOT escaped \\\n" zig-multiline-string-face))))
+     ("\\\\ This newline is NOT escaped \\" zig-multiline-string-face))))
 
 (ert-deftest test-font-lock-backslash-in-str-literal ()
   (zig-test-font-lock
@@ -100,8 +100,8 @@ const python =
 ;"
    '(("const" font-lock-keyword-face)
      ("python" font-lock-variable-name-face)
-     ("\\\\def main():\n" zig-multiline-string-face)
-     ("\\\\    print(\"Hello, world!\")\n" zig-multiline-string-face))))
+     ("\\\\def main():" zig-multiline-string-face)
+     ("\\\\    print(\"Hello, world!\")" zig-multiline-string-face))))
 
 (ert-deftest test-font-lock-parameters-pointers-and-arrays ()
   (zig-test-font-lock
@@ -116,6 +116,26 @@ const python =
      ("maybeFoo" font-lock-variable-name-face)
      ("Foo" font-lock-type-face)
      ("void" font-lock-type-face)
+     )))
+
+(ert-deftest test-font-lock-parameters-with-periods ()
+  (zig-test-font-lock
+   "fn doSomething(arg: thing.with.periods) void {}"
+   '(("fn" font-lock-keyword-face)
+     ("doSomething" font-lock-function-name-face)
+     ("arg" font-lock-variable-name-face)
+     ("thing.with.periods" font-lock-type-face)
+     ("void" font-lock-type-face)
+     )))
+
+(ert-deftest test-font-lock-struct-type-with-periods ()
+  (zig-test-font-lock
+   "const S = struct { field: thing.with.periods }; "
+   '(("const" font-lock-keyword-face)
+     ("S" font-lock-variable-name-face)
+     ("struct" font-lock-keyword-face)
+     ("field" font-lock-variable-name-face)
+     ("thing.with.periods" font-lock-type-face)
      )))
 
 ;; Test all permutations of '?', '*', '[]', '* const', and '[] const' for 3 of those in a row
@@ -143,6 +163,27 @@ const python =
                              '(("Bar" font-lock-type-face)
                                ("void" font-lock-type-face)))))
       (zig-test-font-lock test-string expected))))
+
+(ert-deftest test-font-lock-int-types ()
+  (zig-test-font-lock
+   "const Types = .{ u0, i7, u33, i123, u55555 };"
+   '(("const" font-lock-keyword-face)
+     ("Types" font-lock-variable-name-face)
+     ("u0" font-lock-type-face)
+     ("i7" font-lock-type-face)
+     ("u33" font-lock-type-face)
+     ("i123" font-lock-type-face)
+     ("u55555" font-lock-type-face))))
+
+(ert-deftest test-font-lock-escaped-backslash ()
+  (zig-test-font-lock
+   "const a = foo('\\\\', \"C:\\\\\", \\\\
+);"
+   '(("const" font-lock-keyword-face)
+     ("a" font-lock-variable-name-face)
+     ("'\\\\'" font-lock-string-face)
+     ("\"C:\\\\\"" font-lock-string-face)
+     ("\\\\" zig-multiline-string-face))))
 
 ;;===========================================================================;;
 ;; Indentation tests
@@ -380,16 +421,6 @@ const FooBar = struct {};
 	  "Foo"
 	  "Bar"
 	  "FooBar"))))
-
-(ert-deftest test-imenu-enum ()
-  (test-imenu
-   "
-pub const Foo = enum {};
-const FooBarError = enum {};
-"
-   '(("Enum"
-	  "Foo"
-	  "FooBarError"))))
 
 (ert-deftest test-imenu-enum ()
   (test-imenu
